@@ -85,10 +85,10 @@ class ScaleDetector:
 
     def __init__(
         self,
-        y_start_ratio: float = 0.78,
+        y_start_ratio: float = 0.85,
         y_end_ratio: float = 1.0,
-        x_start_ratio: float = 0.55,
-        x_end_ratio: float = 1.0,
+        x_start_ratio: float = 0.70,
+        x_end_ratio: float = 0.95,
     ) -> None:
         self.y_start_ratio = y_start_ratio
         self.y_end_ratio = y_end_ratio
@@ -116,8 +116,8 @@ class ScaleDetector:
         print(f"1 pixel ≈ {meters_per_pixel:.4f} m")
 
         # debug ROI mentése
-        cv2.imwrite("debug_scale_roi.png", roi)
-        print("Skála ROI mentve: debug_scale_roi.png")
+        #cv2.imwrite("debug_scale_roi.png", roi)
+        #print("Skála ROI mentve: debug_scale_roi.png")
 
         return ScaleInfo(
             scale_m=scale_m,
@@ -127,14 +127,32 @@ class ScaleDetector:
 
     def _detect_scale_text(self, roi_bgr: np.ndarray) -> float:
         """OCR-rel kiolvassa a skála értékét (m vagy km)."""
+        # 1) Eredeti ROI mentése (BGR)
+        #cv2.imwrite("debug_scale_roi_original.png", roi_bgr)
+
         gray_roi = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
         gray_roi = cv2.GaussianBlur(gray_roi, (3, 3), 0)
 
-        gray_big = cv2.resize(gray_roi, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+        # 2) Szürke, elmosott ROI mentése
+        #cv2.imwrite("debug_scale_gray_blur.png", gray_roi)
+
+        gray_big = cv2.resize(
+            gray_roi,
+            None,
+            fx=2.0,
+            fy=2.0,
+            interpolation=cv2.INTER_CUBIC
+        )
+
+        # 3) Felnagyított szürke ROI mentése
+        #cv2.imwrite("debug_scale_gray_big.png", gray_big)
 
         _, thresh = cv2.threshold(
             gray_big, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
         )
+
+        # 4) Thresholdolt kép mentése – EZT látja a Tesseract
+        cv2.imwrite("debug_scale_thresh_for_ocr.png", thresh)
 
         config = "--psm 7 -c tessedit_char_whitelist=0123456789m,k "
         text = pytesseract.image_to_string(thresh, config=config)
@@ -156,6 +174,7 @@ class ScaleDetector:
             scale_m = 50.0
 
         return scale_m
+
 
     def _detect_scale_bar_length(self, roi_bgr: np.ndarray) -> int:
         """HoughLinesP segítségével megkeresi a vízszintes skálacsíkot."""
@@ -210,9 +229,7 @@ class HouseDetector:
         self.DIST_MIN = dist_min
         self.min_area_px = min_area_px
 
-    def detect_houses(
-        self, map_img: MapImage, meters_per_pixel: float
-    ) -> Tuple[np.ndarray, List[HouseMeasurement]]:
+    def detect_houses(self, map_img: MapImage, meters_per_pixel: float) -> Tuple[np.ndarray, List[HouseMeasurement]]:
         """
         Házak detektálása és annotálása.
         Visszaadja az annotált RGB képet és a mérések listáját.
@@ -224,14 +241,19 @@ class HouseDetector:
         img_rgb = cv2.cvtColor(img_bgr.copy(), cv2.COLOR_BGR2RGB)
         gray_full = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
+        # DEBUG: bemenetek mentése
+        #cv2.imwrite("HouseDetector_input_bgr.png", img_bgr)
+        #cv2.imwrite("HouseDetector_input_rgb.png", cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR))
+        #cv2.imwrite("HouseDetector_gray_full.png", gray_full)
+
         bg_color = self._estimate_background_color(img_rgb)
         print("Becsült háttérszín (RGB):", bg_color)
 
         mask = self._create_house_mask(img_rgb, gray_full, bg_color)
 
         # debug maszk
-        cv2.imwrite("debug_house_mask.png", mask)
-        print("Ház-maszk mentve: debug_house_mask.png")
+        cv2.imwrite("HouseDetector_mask_morph.png", mask)
+        print("Ház-maszk mentve: HouseDetector_mask_morph.png")
 
         contours, _ = cv2.findContours(
             mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
@@ -281,7 +303,12 @@ class HouseDetector:
 
             house_idx += 1
 
+        # DEBUG: kontúros / annotált kép mentése
+        out_bgr = cv2.cvtColor(out, cv2.COLOR_RGB2BGR)
+        #cv2.imwrite("HouseDetector_contours_annotated.png", out_bgr)
+
         return out, measurements
+
 
     def _estimate_background_color(self, img_rgb: np.ndarray) -> np.ndarray:
         """Kép leggyakoribb színe (kvantálva) mint háttérszín."""
