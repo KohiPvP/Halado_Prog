@@ -13,9 +13,9 @@ IMAGE_PATH = "map.png"
 @dataclass
 class ScaleInfo:
     """A térképskála adatai."""
-    scale_m: float            
-    scale_px: int             
-    meters_per_pixel: float   
+    scale_m: float            # skála valós hossza (m)
+    scale_px: int             # skálacsík hossza pixelben
+    meters_per_pixel: float   # 1 pixel hány méter
 
 
 @dataclass
@@ -27,7 +27,11 @@ class HouseMeasurement:
     centroid: Tuple[int, int]
 
 
+# ---------- KÉPKEZELŐ OSZTÁLY ----------
+
 class MapImage:
+    """Kép beolvasása, alap infók, ROI kivágás stb."""
+
     def __init__(self, path: str) -> None:
         self.path = path
         self.img_bgr: Optional[np.ndarray] = None
@@ -71,8 +75,14 @@ class MapImage:
         return roi
 
 
+# ---------- SKÁLA DETEKTÁLÓ OSZTÁLY ----------
 
 class ScaleDetector:
+    """
+    Skálafelirat OCR-rel, skálacsík HoughLinesP-vel.
+    ROI-t arányokkal adjuk meg (alapértelmezés: eredeti kód).
+    """
+
     def __init__(
         self,
         y_start_ratio: float = 0.78,
@@ -86,6 +96,7 @@ class ScaleDetector:
         self.x_end_ratio = x_end_ratio
 
     def detect(self, map_img: MapImage) -> ScaleInfo:
+        """Fő belépési pont: skála detektálása és m/pixel számítás."""
         roi = map_img.get_roi(
             self.y_start_ratio,
             self.y_end_ratio,
@@ -115,6 +126,7 @@ class ScaleDetector:
         )
 
     def _detect_scale_text(self, roi_bgr: np.ndarray) -> float:
+        """OCR-rel kiolvassa a skála értékét (m vagy km)."""
         gray_roi = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
         gray_roi = cv2.GaussianBlur(gray_roi, (3, 3), 0)
 
@@ -146,6 +158,7 @@ class ScaleDetector:
         return scale_m
 
     def _detect_scale_bar_length(self, roi_bgr: np.ndarray) -> int:
+        """HoughLinesP segítségével megkeresi a vízszintes skálacsíkot."""
         gray_roi = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
         edges = cv2.Canny(gray_roi, 50, 150)
 
@@ -180,8 +193,13 @@ class ScaleDetector:
         return best_len
 
 
+# ---------- HÁZ DETEKTÁLÓ OSZTÁLY ----------
 
 class HouseDetector:
+    """
+    Háttérszín-alapú házdetektálás, terület m²-ben kiírása.
+    """
+
     def __init__(
         self,
         light_min: int = 230,
@@ -195,6 +213,10 @@ class HouseDetector:
     def detect_houses(
         self, map_img: MapImage, meters_per_pixel: float
     ) -> Tuple[np.ndarray, List[HouseMeasurement]]:
+        """
+        Házak detektálása és annotálása.
+        Visszaadja az annotált RGB képet és a mérések listáját.
+        """
         img_bgr = map_img.img_bgr
         if img_bgr is None:
             raise RuntimeError("A kép még nincs beolvasva.")
@@ -262,6 +284,7 @@ class HouseDetector:
         return out, measurements
 
     def _estimate_background_color(self, img_rgb: np.ndarray) -> np.ndarray:
+        """Kép leggyakoribb színe (kvantálva) mint háttérszín."""
         flat = img_rgb.reshape(-1, 3)
         q = (flat // 4) * 4
         uniq, counts = np.unique(q, axis=0, return_counts=True)
@@ -274,6 +297,7 @@ class HouseDetector:
         gray_full: np.ndarray,
         bg_color: np.ndarray,
     ) -> np.ndarray:
+        """Maszk generálása fényesség + háttérszín távolság alapján."""
         diff = img_rgb.astype(np.int16) - bg_color
         dist = np.linalg.norm(diff, axis=2)
 
@@ -292,6 +316,7 @@ class HouseDetector:
 # ---------- FŐ FELDOLGOZÓ OSZTÁLY ----------
 
 class MapAnalyzer:
+    """Magas szintű vezérlő, ami összefűzi a lépéseket."""
 
     def __init__(self, image_path: str) -> None:
         self.map_img = MapImage(image_path)
